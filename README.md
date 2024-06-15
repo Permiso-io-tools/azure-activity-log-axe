@@ -128,6 +128,7 @@ If there are more requests for one item over the others, reprioritization may oc
 | -------- | ------- | ------- |
 | Pull from & Support Schema of Azure Storage  | HIGH    |  Q3 24      |
 | AG Grid Browser Viewer - Interactive Mode Option  | HIGH    |  Q3 24      |
+| Show Schema / Fields Helper Command  | HIGH    |  Q3 24      |
 | Pull from & Support Schema of Azure Log Analytics Workspace | MEDIUM     |  Q4 24      |
 | Read from & Verify Support of JSON Lines or dict[list] File  | MEDIUM    |  Q4 24 - Q1 25       |
 | Additional Built-In Summarizations  | MEDIUM    |  Q4 24 - Q1 25       |
