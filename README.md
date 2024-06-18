@@ -8,7 +8,7 @@
 **Release Date:** June 17th, 2024  
 **Event:** fwd:cloudsec (Washington D.C.)
 
-Azure Activity Log Axe is a continually developing tool that simplifies the transactional log format provided by Microsoft. The tool leverages the "Axe Key," a method created by Nathan Eades of the Permiso P0 Labs team. The Axe Key provides a more consistent grouping of the transactional events of an operation than the traditional built-in Correlation and Operation IDs.
+Azure Activity Log Axe is a continually developing tool that simplifies the transactional log format provided by Microsoft. The tool leverages the "Axe Key," a method created by Nathan Eades (EadesCloudDef) of the Permiso P0 Labs team. The Axe Key provides a more consistent grouping of the transactional events of an operation than the traditional built-in Correlation and Operation IDs.
 
 The OperationId can fail to maintain consistency whenever additional statuses, such as "Accepted," exist among the events of an operation. In these cases, Microsoft changes the OperationId of the final status or when multiple "Accepted" statuses exist (there could be tens). This disrupts the flow of following a single operation from start to end. The Axe Key addresses this issue, ensuring a stronger grouping mechanism and corrects this flaw.
 
