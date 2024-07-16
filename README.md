@@ -20,7 +20,7 @@ Permiso directly uses this method, derived from the need to fully understand an 
 
 This comprehensive view enables better and quicker detection decisions by providing all the expected fields in one place.
 
-Current testing indicates an average error rate of approximately 0.2%. This rate may vary and may be taken into consideration during use. Overall this grouping for our own detection use as been invaluable in providing greater consistency and reliability then built in correlation and operation Ids on their own. 
+Current testing indicates an average error rate of approximately 0.2%. This rate may vary and may be taken into consideration during use. Overall this grouping for our own detection use has been invaluable in providing greater consistency and reliability then built in correlation and operation Ids on their own (which carry a higher error rate in grouping). 
 
 <div align="center">
     <img width="100%" src="https://github.com/EadesCloudDef/azure-activity-log-axe/blob/main/images/whatItDoes.png">
