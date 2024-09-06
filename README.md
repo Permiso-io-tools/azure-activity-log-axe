@@ -8,6 +8,9 @@
 **Release Date:** June 17th, 2024  
 **Event:** fwd:cloudsec (Washington D.C.)
 
+**V2 Release Date:** Sept 8th, 2024  
+**Event:** Blue Team Con (Chicago)
+
 Azure Activity Log Axe is a continually developing tool that simplifies the transactional log format provided by Microsoft. The tool leverages the "Axe Key," a method created by Nathan Eades (EadesCloudDef) of the Permiso P0 Labs team. The Axe Key provides a more consistent grouping of the transactional events of an operation than the traditional built-in Correlation and Operation IDs.
 
 The OperationId can fail to maintain consistency whenever additional statuses, such as "Accepted," exist among the events of an operation. In these cases, Microsoft changes the OperationId of the final status or when multiple "Accepted" statuses exist (there could be tens). This disrupts the flow of following a single operation from start to end. The Axe Key addresses this issue, ensuring a stronger grouping mechanism and corrects this flaw.
@@ -112,6 +115,25 @@ Starting interactive mode:
 
 <br/>
 
+#### Example AG-Grid Mode Executions:
+<div align="center">
+    <img width="90%" src="https://github.com/EadesCloudDef/azure-activity-log-axe/blob/main/images/ag-grid-ui.png">
+</div>
+
+> #### Interactive --> AG-Grid:
+> python3 azure-activity-log-axe **--subscription-id** \<id\> **--start-time** 2024-09-02T04:00:00.000000Z **--end-time** 2024-09-06T05:05:33.5555555Z --field-value-select category:Administrative interactive
+>
+> above command followed by:
+>
+> **aggrid**
+>
+> ---
+>
+> #### Direct to AG-Grid:
+> python3 azure-activity-log-axe **--subscription-id** \<id\> **--start-time** 2024-09-02T04:00:00.000000Z **--end-time** 2024-09-06T05:05:33.5555555Z --field-value-select category:Administrative aggrid
+
+<br/>
+
 #### Option Notes:
 > - Interactive Mode: Saving to a custom path on Windows will require escaped paths: C:\\\\user\Documents\\\\Test\\\\TestOut.csv  **OR**  a quoted path "C:\\user\Documents\\Test\\TestOut.csv"
 > - --field-value-select and --field-value-deselect can both be used more than once to affect different fields
@@ -121,20 +143,18 @@ Starting interactive mode:
 <br/>
 
 
-If there are more requests for one item over the others, reprioritization may occur.  
+If there are more requests for one item over the others, reprioritization may occur.
 
 ### Roadmap
-| Feature    | Priority | Timeline (Quarter Year)
-| -------- | ------- | ------- |
-| Pull from & Support Schema of Azure Storage  | HIGH    |  Q3 24      |
-| AG Grid Browser Viewer - Interactive Mode Option  | HIGH    |  Q3 24      |
-| Show Schema / Fields Helper Command  | HIGH    |  Q3 24      |
-| Pull from & Support Schema of Azure Log Analytics Workspace | MEDIUM     |  Q4 24      |
-| Read from & Verify Support of JSON Lines or dict[list] File  | MEDIUM    |  Q4 24 - Q1 25       |
-| Additional Built-In Summarizations  | MEDIUM    |  Q4 24 - Q1 25       |
-| Secondary Axe Keying to Further Lower Error Rate  | MEDIUM    |  Q1 25 - Q2 25       |
-| Option to Pull from All Subscriptions Available  | LOW    |  Q1 25 - Q2 25       |
-| Splunk TA w/ Custom Command Functions for Axe Keyed & Simplified Data  | LOW    |  Q1 25 - Q2 25       |
+| Feature                                                                   | Priority | Timeline (Quarter Year) | Status      |
+| --------                                                                  | -------- | ----------------------- | ----------- |
+| AG-Grid Browser Viewer                                                    | HIGH     |  Q3 24                  | Completed   |
+| Read from & Verify Support of JSON Lines or dict[list] File               | MEDIUM   |  Q4 24 - Q1 25          | In-Progress |
+| Pull from & Support Schema of Azure Storage                               | HIGH     |  Q4 24 - Q1 25          | Planning    |
+| Secondary Axe Keying to Further Lower Error Rate                          | HIGH     |  Q1 25 - Q2 25          | Planning    |
+| Pull from & Support Schema of Azure Log Analytics Workspace               | MEDIUM   |  Q1 25 - Q2 25          | Future      |
+| Option to Pull from All Subscriptions Available                           | LOW      |  Q2 25 - Q3 25          | Future      |
+| Splunk TA w/ Custom Command Functions for Axe Keyed & Simplified Data     | LOW      |  Q2 25 - Q3 25          | Future      |
 
 <br/>
 
@@ -153,7 +173,7 @@ AzureActivity
 | summarize take_any(correlationId),
             take_any(category),
             take_any(operationName),
-            startTime = min(TimeGenerated), 
+            startTime = min(TimeGenerated),
             endTime = max(TimeGenerated),
             normalSubStatus = make_set_if(subStatus, isnotempty(subStatus) and status != "failure"),
             failedSubStatus = make_set_if(subStatus, isnotempty(subStatus) and status == "failure"),

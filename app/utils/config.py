@@ -29,7 +29,7 @@ License: Apache License
 import logging
 
 # Global Log Level
-LOG_LEVEL: int = logging.INFO
+LOG_LEVEL: int = logging.WARNING
 
 # Available Output Types
 valid_output_types: list[str] = ['json', 'csv']
