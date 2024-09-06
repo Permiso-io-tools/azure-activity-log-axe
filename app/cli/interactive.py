@@ -40,6 +40,8 @@ def repl(ctx):
             break
         elif command == 'summary':
             ctx.invoke(commands.summary)
+        elif command.startswith('aggrid'):
+            process_repl_aggrid(ctx, command, commands.aggrid)
         elif command.startswith('save-axe-keyed-data'):
             process_repl_save_command(ctx, command, commands.save_axe_keyed_data)
         elif command.startswith('save-simplified-data'):
@@ -68,6 +70,7 @@ def repl_print_help():
     --filepath TEXT           Absolute File Path. (Used by the Save commands.)
 
     Commands:
+    aggrid                Browser GUI - Navigate the data using AG-Grid.
     save-axe-keyed-data   Saves the original azure activity log data plus axeKey to a json or csv file.
     save-simplified-data  Saves the simplified azure activity log data to a json or csv file.
     show-axe-keyed-data   Prints the original azure activity log data plus axeKey (json or csv), to the cli.
@@ -149,3 +152,37 @@ def process_repl_show_command(ctx, command, func):
     except Exception as e:
         interactive_logger.error(f'Unexpected error: {str(e)}')
         interactive_logger.warning(f'Usage: {command.split()[0]} --select <fields,> --field-value-select <field:value,> --field-value-deselect <field:value,> --output-type <json|csv>')
+
+
+def process_repl_aggrid(ctx, command, func):
+    # This processor gets called to collect all arguments before sending to command
+    try:
+        args = shlex.split(command)
+    except ValueError as e:
+        interactive_logger.warning("Argument parsing error: you did not properly close a parenthesized string.")
+    try:
+        command_args = {
+            'field_value_select': [], # Initialize list for multi entry option/arg
+            'field_value_deselect': []
+        }
+        iterator_obj = iter(args[1:])
+        for arg in iterator_obj:
+            if arg == '--select':
+                command_args['select'] = next(iterator_obj)
+            elif arg == '--field-value-select':
+                command_args['field_value_select'].append(next(iterator_obj))
+            elif arg == '--field-value-deselect':
+                command_args['field_value_deselect'].append(next(iterator_obj))
+            elif arg.startswith('--'):
+                 interactive_logger.warning(f'Invalid arg {arg}, skipped.')
+
+        command_args['field_value_select'] = tuple(command_args['field_value_select']) # Set multi entry option/arg to expected tuple
+        command_args['field_value_deselect'] = tuple(command_args['field_value_deselect']) # Set multi entry option/arg to expected tuple
+        ctx.invoke(func, **command_args)
+    except (ValueError, IndexError):
+        interactive_logger.warning(f'Usage: {command.split()[0]} --select <fields,> --field-value-select <field:value,> --field-value-deselect <field:value,>')
+    except StopIteration:
+        interactive_logger.warning(f'You have provided an argument with no input. \n Usage: --select <fields,> --field-value-select <field:value,> --field-value-deselect <field:value,>')
+    except Exception as e:
+        interactive_logger.error(f'Unexpected error: {str(e)}')
+        interactive_logger.warning(f'Usage: {command.split()[0]} --select <fields,> --field-value-select <field:value,> --field-value-deselect <field:value,>')

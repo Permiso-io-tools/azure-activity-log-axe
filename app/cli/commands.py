@@ -27,11 +27,19 @@ License: Apache License
 #   limitations under the License.
 
 import click
+import dash_ag_grid as dag
+import dash_bootstrap_components as dbc
 import json
+import logging
 import pandas as pd
-from pathlib import Path
+import psutil
 import re
+import socket
 import sys
+from dash import Dash, dcc, html, Input, Patch, State, callback_context, no_update
+from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
+from pathlib import Path
 from .interactive import repl
 from app.core.azure_activity_processor import AzureActivityProcessor
 from app.utils.config import valid_output_types
@@ -211,6 +219,310 @@ def show_simplified_data(ctx, select: str | None = None, field_value_select: tup
 
 @azure_activity_log_axe.command()
 @click.pass_context
+def aggrid(ctx, select: str | None = None, field_value_select: tuple | None = None, field_value_deselect: tuple | None = None):
+    """
+    Browser GUI - Navigate the data using AG-Grid.
+    """
+
+    # Set up logger for Dash app
+    dash_logger = get_logger('dash_app')
+
+    # Redirect Werkzeug logger to custom logger
+    werkzeug_logger = logging.getLogger('werkzeug')
+    werkzeug_logger.setLevel(logging.ERROR)
+    werkzeug_logger.handlers = []  # Clear existing handlers
+    werkzeug_logger.addHandler(dash_logger.handlers[0])
+
+    try:
+        # Get Data from CTX Object
+        azure_activity: AzureActivityProcessor = ctx.obj['azure_activity']
+        # Assign aruments from options.
+        # 1st assignment check is from interactive, 2nd is running the python app command directly
+        select = select or ctx.obj['select_param']
+        field_value_select = field_value_select or ctx.obj['field_value_select_param']
+        field_value_deselect = field_value_deselect or ctx.obj['field_value_deselect_param']
+        dfKeyedLogData: pd.DataFrame | None = None
+        dfSimplifiedData: pd.DataFrame | None = None
+
+        # Apply any filters that exist
+        if select or field_value_select or field_value_deselect:
+            dfKeyedLogData = df_filter(select, field_value_select, field_value_deselect, azure_activity.keyed_log_data)
+            dfSimplifiedData = df_filter(select, field_value_select, field_value_deselect, azure_activity.simplified_log_data_list)
+        else:
+            dfKeyedLogData = azure_activity.keyed_log_data
+            dfSimplifiedData = azure_activity.simplified_log_data_list
+
+        # Check that field is JSON
+        def is_json_serializable(value) -> bool:
+            try:
+                json.dumps(value)
+                return True
+            except (TypeError, OverflowError):
+                return False
+
+        # Convert fields to JSON strings if they are JSON serializable
+        def jsonSerialize(og_df: pd.DataFrame) -> pd.DataFrame:
+            df: pd.DataFrame = og_df.copy()
+            for col in df.columns:
+                df[col] = df[col].apply(lambda x: json.dumps(x) if is_json_serializable(x) else x)
+            return df
+        # Clean Data and Create Default Columns
+        convertedDfKeyedLogData: pd.DataFrame = jsonSerialize(dfKeyedLogData)
+        convertedDfSimplifiedData: pd.DataFrame = jsonSerialize(dfSimplifiedData)
+        keyed_default_columns: list[str] = ['axeKey', 'operationName', 'correlationId', 'operationId', 'caller', 'category', 'eventTimestamp', 'status']
+        simplified_default_columns: list[str] = ['axeKey', 'operationName', 'correlationId', 'operationIds', 'caller', 'category', 'startTime', 'endTime', 'statusCounts']
+        keyedLogDataColumnDefDefaults: list[dict[str,str]] = [{"field": str(col)} for col in keyed_default_columns]
+        simplifiedDataColumnDefDefaults: list[dict[str,str]] = [{"field": str(col)} for col in simplified_default_columns]
+
+        # Create App & Get Stylesheets
+        app: Dash = Dash(
+            __name__,
+            external_stylesheets=[dbc.themes.BOOTSTRAP],
+            assets_folder="../../assets"
+        )
+
+        app.index_string = '''
+        <!DOCTYPE html>
+        <html>
+            <head>
+                {%metas%}
+                <title>Azure Activity Log Axe</title>
+                {%favicon%}
+                {%css%}
+            </head>
+            <body>
+                {%app_entry%}
+                <footer>
+                    {%config%}
+                    {%scripts%}
+                    {%renderer%}
+                </footer>
+            </body>
+        </html>
+        '''
+
+        app.layout = html.Div([
+            html.Div([
+                html.Div([
+                    dcc.Input(id='quick-filter-input', placeholder='global filter...'),
+                ], className='button-group'),
+                html.Div([
+                    html.Div([
+                        html.Div(id='column-select-div-button', className='custom-button-selector'),
+                        dbc.Modal([
+                            dbc.ModalHeader(dbc.ModalTitle('Column Select'), close_button=False),
+                            dbc.ModalBody(id='column-select-body'),
+                            dbc.ModalFooter([
+                                dbc.Button('Save', id='save-column-select-button', className='modal-footer-button'),
+                                dbc.Button('Close', id='close-column-select-button', className='modal-footer-button'),
+                            ]),
+                        ], id='column-select-modal', is_open=False, scrollable=True),
+                    ], className='button-group-selector'),
+                    html.Div([
+                        html.Button(
+                            children=[
+                                html.Div('Keyed Data', className='button-text-dev'),
+                                html.Div(len(dfKeyedLogData), id='keyed-event-count', className='event-counter event-counter-keyed'),
+                            ], id='keyed-data-button', className='custom-button',
+                        ),
+                    ], className='button-group-keyed'),
+                    html.Div([
+                        html.Button(
+                            children=[
+                                html.Div('Simplified Data', className='button-text-dev'),
+                                html.Div(len(dfSimplifiedData), id='simplified-event-count', className='event-counter event-counter-simplified'),
+                            ], id='simplified-data-button', className='custom-button'),
+                    ], className='button-with-counter'),
+                ], className='button-group'),
+            ], id='button-container'),
+            html.Div([
+                dag.AgGrid(
+                    id='ag-grid',
+                    rowData=[],
+                    columnDefs=[],
+                    defaultColDef={
+                        'resizable': True,
+                        'sortable': True,
+                        'filter': True,
+                        'minWidth': 125,
+                    },
+                    dashGridOptions={
+                        'enableCellTextSelection': True,
+                        'ensureDomOrder': True,
+                        'pagination': True,
+                        'paginationAutoPageSize': True,
+                        'headerHeight': 30,
+                        'footerHeight': 30,
+                        'rowHeight': 30,
+                    },
+                )
+            ], id='ag-grid-container'),
+            html.Div([
+                dbc.Modal(
+                    [
+                        dbc.ModalHeader(dbc.ModalTitle('Data Viewer'), close_button=False),
+                        dbc.ModalBody(id='viewer-modal-content'),
+                        dbc.ModalFooter(
+                            dbc.Button('Close', id='close-modal-button', className='modal-footer-button')
+                        ),
+                    ],
+                    id='viewer-modal',
+                    size='lg',
+                    is_open=False,
+                    centered=True,
+                ),
+            ]),
+            dcc.Store(id='all-columns', data=[]),
+        ], id='app-container')
+
+        # Global Filter Controller
+        @app.callback(
+            Output('ag-grid', 'dashGridOptions'),
+            Input('quick-filter-input', 'value')
+        )
+        def update_filter(filter_value) -> Patch:
+            newFilter = Patch()
+            newFilter['quickFilterText'] = filter_value
+            return newFilter
+
+        # AG-GRID Cell Data Viewer Modal Controller
+        @app.callback(
+            Output('viewer-modal', 'is_open'), # Display Control
+            Output('viewer-modal-content', 'children'),
+            Input('ag-grid', 'cellDoubleClicked'),
+            Input('close-modal-button', 'n_clicks'),
+            State('viewer-modal', 'is_open'),
+        )
+        def show_json_modal(cell_double_clicked: dict | None, close_click, is_open) -> tuple:
+            # No Update
+            if callback_context.triggered_id == 'close-modal-button':
+                return False, no_update
+            if cell_double_clicked is None:
+                return False, no_update
+
+            # Double Click Modal Control
+            cell_value: str = cell_double_clicked.get('value')
+            try:
+                return_value: str = ''
+                if cell_value.startswith('{') or cell_value.startswith('['): # JSON
+                    parsed_json = json.loads(cell_value)
+                    return_value = json.dumps(parsed_json, indent=2)
+                elif cell_value.startswith('"'): # STR
+                    return_value = cell_value.strip('"')
+                else: # OTHER
+                    return_value = cell_value
+                return True, html.Pre(return_value)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return False, cell_value
+
+        # AG-GRID Data & UI Button Color Controller
+        @app.callback(
+            Output('ag-grid', 'rowData'), # Data Output
+            Output('ag-grid', 'columnDefs'), # Column Definitions
+            Output('all-columns', 'data'), # Controls Viewable Columns
+            Output('keyed-data-button', 'className'), # Data Selection Button Class
+            Output('simplified-data-button', 'className'), # Data Selection Button Class
+            Input('keyed-data-button', 'n_clicks'),
+            Input('simplified-data-button', 'n_clicks'),
+            Input('save-column-select-button', 'n_clicks'),
+            State('column-select-body', 'children'), # Get Checked Fields
+        )
+        def button_controller(
+            keyed_clicks: int,
+            simp_clicks: int,
+            save_clicks: int,
+            checkbox_modal_body: dict[str, any],
+            ) -> tuple:
+            if not callback_context.triggered:
+                # No Change.
+                raise PreventUpdate
+            else:
+                triggered_id = callback_context.triggered_id
+
+                # UI Color CSS Classes
+                normal_button_class = 'custom-button'
+                active_button_class = 'custom-button active'
+
+                # Display Relevant Data & Correct Color
+                if triggered_id == 'keyed-data-button':
+                    return convertedDfKeyedLogData.to_dict('records'), keyedLogDataColumnDefDefaults, sorted(list(dfKeyedLogData.columns)), active_button_class, normal_button_class
+                elif triggered_id == 'simplified-data-button':
+                    return convertedDfSimplifiedData.to_dict('records'), simplifiedDataColumnDefDefaults, sorted(list(dfSimplifiedData.columns)), normal_button_class, active_button_class
+
+                # Save New Column Selections
+                elif triggered_id == 'save-column-select-button':
+                    selected_columns = []
+                    checkboxes = checkbox_modal_body.get('props', {}).get('children', [])
+                    for checkbox in checkboxes:
+                        props = checkbox.get('props', {})
+                        if props.get('value', False):
+                            label = props.get('label')
+                            if label:
+                                selected_columns.append(label)
+
+                    if selected_columns:
+                        new_columnDefs = [{'field': col} for col in selected_columns]
+                        return no_update, new_columnDefs, no_update, no_update, no_update
+                    else:
+                        raise PreventUpdate
+                # No Change.
+                raise PreventUpdate
+
+        # Data Columns Selection Modal Controller
+        @app.callback(
+            Output('column-select-modal', 'is_open'), # Display Control
+            Output('column-select-body', 'children'), # Show Columns in Selector Modal
+            Input('column-select-div-button', 'n_clicks'),
+            Input('save-column-select-button', 'n_clicks'),
+            Input('close-column-select-button', 'n_clicks'),
+            State('column-select-modal', 'is_open'),
+            State('all-columns', 'data'),
+            State('ag-grid', 'columnDefs'),
+        )
+        def toggle_column_select_modal(
+            n_open: int,
+            n_save: int,
+            n_close: int,
+            is_open: bool,
+            available_columns: list[str],
+            current_columnDefs) -> tuple:
+            # No Change
+            if not callback_context.triggered:
+                raise PreventUpdate
+
+            triggered_id = callback_context.triggered_id
+
+            # No Change
+            if triggered_id == 'close-column-select-button':
+                return False, no_update
+            if triggered_id == 'save-column-select-button':
+                return False, no_update
+
+            # Display Selecting Checkboxes
+            if triggered_id == 'column-select-div-button':
+                current_columns = [col['field'] for col in current_columnDefs]
+                modal_body = dbc.Form([
+                    dbc.Checkbox(
+                        id=f'column-checkbox-{col}',
+                        label=col,
+                        value=col in current_columns,
+                        className='mb-2'
+                    ) for col in available_columns
+                ])
+                return True, modal_body
+
+            # No Change
+            return False, no_update
+
+        # Dash App Start
+        run_dash_app(dash_logger, app)
+    except Exception as e:
+        dash_logger.error(f"Error in Dash application: {str(e)}")
+        command_logger.info(f"An error occurred: {str(e)}")
+
+
+@azure_activity_log_axe.command()
+@click.pass_context
 def interactive(ctx):
     """
     Interactive REPL Interface to run Azure Activity Log Axe.
@@ -218,7 +530,7 @@ def interactive(ctx):
     repl(ctx)
 
 
-def print_output_type(output_type: str | None, azure_activity_data: list[dict]):
+def print_output_type(output_type: str | None, azure_activity_data: list[dict]) -> None:
     # Secondary override to force json if None
     output_type = output_type or 'json'
     # Force a correct file type
@@ -245,15 +557,21 @@ def df_filter(select: str | None, field_value_select: tuple | None, field_value_
         if field_value_select:
             for condition in field_value_select:
                 field, values = condition.split(':') # field:"value,value"
-                field_value_select_list = values.split(",") # [value,value]
-                df = df[df[field].isin(field_value_select_list)]
+                field_value_select_list = values.split(',') # [value,value]
+                if isinstance(df[field].iloc[0], dict):
+                    df = df[df[field].apply(lambda x: x.get('value') in field_value_select_list)]
+                else:
+                    df = df[df[field].isin(field_value_select_list)]
         if field_value_deselect:
             for condition in field_value_deselect:
                 field, values = condition.split(':') # field:"value,value"
-                field_value_deselect_list = values.split(",") # [value,value]
-                df = df[~df[field].isin(field_value_deselect_list)]
+                field_value_deselect_list = values.split(',') # [value,value]
+                if isinstance(df[field].iloc[0], dict):
+                    df = df[~df[field].apply(lambda x: x.get('value') in field_value_deselect_list)]
+                else:
+                    df = df[~df[field].isin(field_value_deselect_list)]
         if select:
-            select_list = select.split(",") # [value,value]
+            select_list = select.split(',') # [value,value]
             df = df[select_list]
 
         return df
@@ -272,6 +590,59 @@ def df_filter(select: str | None, field_value_select: tuple | None, field_value_
     except ValueError as e:
         command_logger.warning(f'Ensure field_value filters use a ":" to separate field:comma,delimited,list.')
         return pd.DataFrame()  # return empty dataframe
+
+
+def is_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('localhost', port))
+            return False
+        except socket.error:
+            return True
+
+
+def kill_process_on_port(logger: logging.Logger, port: int) -> bool | str:
+    try:
+        for conn in psutil.net_connections():
+            if conn.laddr.port == port:
+                try:
+                    process = psutil.Process(conn.pid)
+                    if process.name().lower().startswith('python'):
+                            logger.info(f'Killing Python process (PID: {conn.pid}) using port {port}')
+                            process.terminate()
+                            logger.info(f'Waiting briefly before starting Dash app...')
+                            process.wait(timeout=5)
+                            return True
+                    else:
+                        logger.warning(f'Process on port {port} (PID: {conn.pid}) is not a Python process. Not killing.')
+                except psutil.NoSuchProcess:
+                    logger.info(f'Process on port {port} no longer exists')
+        return False
+    except psutil.AccessDenied:
+        logger.error(f'Access denied when trying to identify process on port: {port}.')
+        logger.error('Try running the script with elevated privileges.')
+        return 'error'
+    except (PermissionError, OSError) as e:
+        logger.error(f'Permission error when trying to kill process on port: {port}.')
+        logger.error('Try running the script with elevated privileges.')
+        return 'error'
+
+
+def run_dash_app(logger: logging.Logger, app: Dash, port: int = 8000):
+    try:
+        if is_port_in_use(port):
+            if kill_process_on_port(logger, port) != 'error':
+                Console().print('[+] Starting Dash App ⚙', style='bold green')
+                command_logger.info('[+] Starting Dash App ⚙')
+                app.run(debug=False,port=port)
+        else:
+            Console().print('[+] Starting Dash App ⚙', style='bold green')
+            command_logger.info('[+] Starting Dash App ⚙')
+            app.run(debug=False,port=port)
+    except Exception as e:
+        logger.error(f'Unexpected error: {str(e)}')
+        print(f'An unexpected error occurred: {str(e)}')
+
 
 azure_activity_log_axe.context_settings = dict(
     help_option_names=['-h', '--help'],
